@@ -93,5 +93,5 @@ class PredictionKernelConv(nn.Module):
         self.kernel_size = kernel_size
         self.bias = bias
 
-    def forward(self):
+    def forward(self, input: Tensor):
         raise NotImplementedError
