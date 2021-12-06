@@ -61,11 +61,13 @@ if __name__ == "__main__":
     datasets = KPNDataset(data_dir = args.data_dir, base_dataset_cls = Adobe5K, **cfg["dataset_cfg"])
     train_loader = data.DataLoader(dataset = datasets.splits["train"], \
             batch_size = cfg["batch_size"], num_workers = cfg["num_workers"], shuffle = True)
+    val_loader = data.DataLoader(dataset = datasets.splits["test"], \
+            batch_size = cfg["batch_size"], num_workers = cfg["num_workers"], shuffle = False)
 
     criterion = LossFunc(
-            coeff_basic=1.0,
-            coeff_anneal=1.0,
-            gradient_L1=True,
+            coeff_basic = 1.0,
+            coeff_anneal = 1.0,
+            gradient_L1 = True,
             alpha = 0.9998,
             beta = 100.)
     
@@ -73,15 +75,39 @@ if __name__ == "__main__":
         optimizer = optim.Adam(model.parameters(), lr = cfg["learning_rate"])
         scheduler = optim.lr_scheduler.StepLR(optimizer, **cfg["scheduler_cfg"])
 
-    for burst, target, white_level in train_loader:
-        burst = burst.to(DEVICE)
-        target = target.to(DEVICE)
-        white_level = white_level.to(DEVICE)
-        mean_output, output = model(burst, white_level)
+    for epoch in range(100):
+        total_loss = 0
+        total = 0
+        for burst, target, white_level in train_loader:
+            burst = burst.to(DEVICE)
+            target = target.to(DEVICE)
+            white_level = white_level.to(DEVICE)
+            mean_output, output = model(burst, white_level)
 
-        loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
-        loss = loss_basic + loss_anneal
+            loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
+            loss = loss_basic + loss_anneal
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            total += len(burst)
+        print("Epoch {}: {:.5f}".format(epoch, total_loss / total))
+        
+        total_loss = 0
+        total = 0
+        for burst, target, white_level in val_loader:
+            burst = burst.to(DEVICE)
+            target = target.to(DEVICE)
+            white_level = white_level.to(DEVICE)
+            mean_output, output = model(burst, white_level)
+
+            loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
+            loss = loss_basic + loss_anneal
+            
+            total_loss += loss.item()
+            total += len(burst)
+        
+        print("Epoch {}: val:{:.5f}".format(epoch, total_loss / total))
+        
