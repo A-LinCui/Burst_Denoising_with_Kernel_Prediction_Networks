@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Tuple
 
 import numpy as np
 import torch
@@ -20,10 +20,10 @@ class KPNTransform(nn.Module):
 
     Args:
         burst_num (int): Number of images in the input burst, denoted by ``N`` in the paper.
-        patch_size (int):
-        input_crop_size (int): Crop the origin image into a fixed size before downsampling.
         downsample (int): Downsample patches in each dimension using a box filter, 
                           which reduces noise and compression artifacts.
+        blind (bool): Whether to estimate blindly.
+        misalignment (int): Maximum misalignment.
         max_translational_shift (int): Maximum number of pixels for translational shift 
                                        after downsampling relative to the reference.
         train (bool): Only apply the horizontal flpping in training mode.
@@ -48,17 +48,16 @@ class KPNTransform(nn.Module):
         self.center_crop_2 = AdaptiveCenterCrop(
                 downsample * (max_translational_shift - misalignment))
         
-    def forward(self, img: Tensor):
+    def forward(self, img: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
         r"""
-
         Args:
            img (Tensor): The origin image ([1, H, W]). At present, we only support gray images.
 
-
         Returns:
-            
+            burst_noise (Tensor): Input burst with noise.
+            target (Tensor): The groundtruth image.
+            white_level (Tensor): White level.
         """
-
         # Step 1: Generate the target image
         img_burst = [self.center_crop(img)]
 
@@ -93,6 +92,22 @@ class KPNTransform(nn.Module):
         white_level = torch.pow(10, -torch.rand((1, 1, 1))).type_as(img_burst)
         img_burst = white_level * img_burst
 
+        burst_noise = self.sim_burst_noise(img_burst, target)
+
+        white_level = white_level.unsqueeze(0)
+        return burst_noise, target, white_level
+
+    def sim_burst_noise(self, img_burst: Tensor, target: Tensor) -> Tensor:
+        r"""
+        Add simulated noise on the input burst.
+
+        Args:
+            img_burst (Tensor): Input burst.
+            target (Tensor): The groundtruth.
+
+        Returns:
+            burst_noise (Tensor): Input burst with simulated noise.
+        """
         sigma_read = torch.from_numpy(
                 np.power(10, np.random.uniform(-3.0, -1.5, (1, 1, 1)))
         ).type_as(img_burst)
@@ -117,10 +132,9 @@ class KPNTransform(nn.Module):
                     dim = 0)[0])
             )
             burst_noise = torch.cat([burst_noise, sigma_estimate.unsqueeze(0)], dim = 0)
+        
+        return burst_noise
 
-        white_level = white_level.unsqueeze(0)
-        return burst_noise, target, white_level
-                        
 
 class KPNDataset(CVDataset):
     def __init__(self, data_dir: str, 
@@ -179,7 +193,11 @@ if __name__ == "__main__":
                              "random_split": False}
                          )
 
-    for data in dataset.splits["test"]:
+    for i, data in enumerate(dataset.splits["test"]):
+
+        if i < 20:
+            continue
+
         from matplotlib import cm
         import matplotlib.pyplot as plt
         for i, _data in enumerate(data[0]):
