@@ -5,19 +5,24 @@ import argparse
 import torch
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+import torch.utils.data as data
 import extorch
 import extorch.utils as utils
 
 from kpn import KPN
+from dataset import Adobe5K, KPNDataset
+
+from loss import LossFunc
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("cfg_file")
     parser.add_argument("--gpu", type = int, default = 0, help = "used GPU id")
+    parser.add_argument("--data-dir", type = str, required = True, help = "path of the data")
     parser.add_argument("--train-dir", type = str, default = None, help = "path to save the ckpt")
     parser.add_argument("--seed", type = int, default = None)
-    parser.add_argument("--only-eval", action = "store_true", default = True)
+    parser.add_argument("--only-eval", action = "store_true", default = False)
     parser.add_argument("--load", type = str, default = None)
     args = parser.parse_args()
 
@@ -46,15 +51,37 @@ if __name__ == "__main__":
         utils.set_seed(args.seed)
         LOGGER.info("Set seed: {}".format(args.seed))
 
-    model = KPN(**model_cfg)
+    model = KPN(**cfg["model_cfg"])
     if args.load:
         LOGGER.info("Load checkpoint from {}".format(os.path.abspath(args.load)))
         ckpt = torch.load(args.load, map_location = torch.device("cpu"))
         model.load_state_dict(ckpt)
     model.to(DEVICE)
 
-    # criterion = 
+    datasets = KPNDataset(data_dir = args.data_dir, base_dataset_cls = Adobe5K, **cfg["dataset_cfg"])
+    train_loader = data.DataLoader(dataset = datasets.splits["train"], \
+            batch_size = cfg["batch_size"], num_workers = cfg["num_workers"], shuffle = True)
+
+    criterion = LossFunc(
+            coeff_basic=1.0,
+            coeff_anneal=1.0,
+            gradient_L1=True,
+            alpha = 0.9998,
+            beta = 100.)
     
     if not args.only_eval:
         optimizer = optim.Adam(model.parameters(), lr = cfg["learning_rate"])
         scheduler = optim.lr_scheduler.StepLR(optimizer, **cfg["scheduler_cfg"])
+
+    for burst, target, white_level in train_loader:
+        burst = burst.to(DEVICE)
+        target = target.to(DEVICE)
+        white_level = white_level.to(DEVICE)
+        mean_output, output = model(burst, white_level)
+
+        loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
+        loss = loss_basic + loss_anneal
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()

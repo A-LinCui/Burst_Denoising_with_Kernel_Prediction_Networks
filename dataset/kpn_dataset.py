@@ -11,7 +11,7 @@ from torch.nn.functional import adaptive_avg_pool2d
 from extorch.vision.dataset import CVDataset
 from extorch.vision.transforms import AdaptiveRandomCrop, AdaptiveCenterCrop
 
-from adobe5k import Adobe5K
+from . adobe5k import Adobe5K
 
                    
 class KPNTransform(nn.Module):
@@ -20,6 +20,7 @@ class KPNTransform(nn.Module):
 
     Args:
         burst_num (int): Number of images in the input burst, denoted by ``N`` in the paper.
+        resize (Union[int, Tuple[int, int]]): Initial resize shape.
         downsample (int): Downsample patches in each dimension using a box filter, 
                           which reduces noise and compression artifacts.
         blind (bool): Whether to estimate blindly.
@@ -28,8 +29,9 @@ class KPNTransform(nn.Module):
                                        after downsampling relative to the reference.
         train (bool): Only apply the horizontal flpping in training mode.
     """
-    def __init__(self, burst_num: int, downsample: int, blind: bool, 
-            misalignment: int, max_translational_shift: int, train: bool) -> None:
+    def __init__(self, burst_num: int, resize: Union[int, Tuple[int, int]],
+                 downsample: int, blind: bool, misalignment: int, 
+                 max_translational_shift: int, train: bool) -> None:
         super(KPNTransform, self).__init__()
         self.burst_num = burst_num
         self.downsample = downsample
@@ -40,6 +42,8 @@ class KPNTransform(nn.Module):
             self.horizontal_flip = transforms.RandomHorizontalFlip(p = 0.5)
 
         self.blind = blind
+        self.init_resize = transforms.Resize(
+                (resize, resize) if isinstance(resize, int) else resize)
 
         self.adaptive_crop = AdaptiveRandomCrop(downsample * misalignment)
         self.misalignment_crop = AdaptiveRandomCrop(downsample * max_translational_shift)
@@ -59,6 +63,7 @@ class KPNTransform(nn.Module):
             white_level (Tensor): White level.
         """
         # Step 1: Generate the target image
+        img = self.init_resize(img)
         img_burst = [self.center_crop(img)]
 
         # Step 2: Generate a synthetic burst of N frames
@@ -86,6 +91,7 @@ class KPNTransform(nn.Module):
         # Step 4: Hotizontal flipping
         if self.train:
             img_burst = self.horizontal_flip(img_burst)
+        img_burst = img_burst.squeeze(1)
 
         target = torch.clone(img_burst[0]) # The origin image is the first in the burst frames
 

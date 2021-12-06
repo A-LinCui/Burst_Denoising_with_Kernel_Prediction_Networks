@@ -1,10 +1,11 @@
 from typing import List
 
 import numpy as np
+import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.nn.functional as F
-from extorch.nn.module.operation import ConvReLU
+from extorch.nn import ConvReLU
 
 
 class KPNBlock(nn.Module):
@@ -21,17 +22,12 @@ class KPNBlock(nn.Module):
 
 
 class KPN(nn.Module):
-    def __init__(self, burst_length: int, kernel_size: List[int], core_bias: bool = False) -> None:
+    def __init__(self, burst_length: int, kernel_size: int) -> None:
         super(KPN, self).__init__()
         self.burst_length = burst_length
-        self.blind_est = blind_est
-        self.kernel_size = kernel_size
-        self.core_bias = core_bias
         
-        in_channels = self.burst_length + 1
-        out_channels = np.sum(np.array(self.kernel_size) ** 2)) * self.burst_length
-        if self.core_bias:
-            out_channels += self.burst_length
+        in_channels = self.burst_length
+        out_channels = kernel_size ** 2 * self.burst_length
 
         down_sample_out_channels = [64, 128, 256, 512, 512]
         self.downsample_layers = nn.ModuleList(
@@ -45,7 +41,7 @@ class KPN(nn.Module):
 
         self.avgpool = nn.AvgPool2d(kernel_size = 2, stride = 2)
 
-        up_sample_out_channels = [512, 256, out_channel]
+        up_sample_out_channels = [512, 256, out_channels]
         self.upsample_layers = nn.ModuleList(
             KPNBlock(in_channels = down_sample_out_channels[-i - 1] + down_sample_out_channels[-i - 2],
                      out_channels = up_sample_out_channels[i],
@@ -55,8 +51,8 @@ class KPN(nn.Module):
             ) for i in range(len(up_sample_out_channels))
         )
 
-        self.conv = nn.Conv2d(out_channel, out_channel, 1, 1, 0)
-        self.predict_kernel = PredictionKernelConv(kernel_size, self.core_bias)
+        self.conv = nn.Conv2d(out_channels, out_channels, 1, 1, 0)
+        self.predict_kernel = PredictionKernelConv()
 
         self.apply(self._init_weights)
 
@@ -69,29 +65,43 @@ class KPN(nn.Module):
             nn.init.xavier_normal_(m.weight.data)
             nn.init.constant_(m.bias.data, 0.)
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor, white_level: Tensor) -> Tensor:
         down_sample_outputs = [input]
-        for down_block in self.downsample_layers:
-            down_sample_outputs.append(self.avgpool(down_block(down_sample_outputs[-1])))
+        for i, down_block in enumerate(self.downsample_layers):
+            if i == 0:
+                down_sample_outputs.append(down_block(down_sample_outputs[-1]))
+            else:
+                down_sample_outputs.append(self.avgpool(down_block(down_sample_outputs[-1])))
 
         outputs = down_sample_outputs[-1]
-        for i in range(len(self.upsample_blocks)):
-            outputs = self.upsample_blocks[i](
-                    torch.cat([
-                        down_sample_outputs[- i - 2], 
-                        F.interpolate(outputs, scale_factor = 2, mode = "bilinear")
-                        ], dim = 1)
+
+        for i, upsample_layer in enumerate(self.upsample_layers):
+            interpolate_size = down_sample_outputs[- i - 2].shape[2:]
+            outputs = self.upsample_layers[i](torch.cat([
+                down_sample_outputs[- i - 2], 
+                F.interpolate(outputs, size = interpolate_size, mode = "bilinear")
+                ], dim = 1)
             )
 
         outputs = self.conv(F.interpolate(outputs, scale_factor = 2, mode = "bilinear"))
-        return self.predict_kernel(outputs)
+        return self.predict_kernel(input, outputs, white_level)
 
 
 class PredictionKernelConv(nn.Module):
-    def __init__(self, kernel_size: List[int], bias: bool = False):
+    def __init__(self):
         super(PredictionKernelConv, self).__init__()
-        self.kernel_size = kernel_size
-        self.bias = bias
 
-    def forward(self, input: Tensor):
-        raise NotImplementedError
+    def forward(self, ori_input: Tensor, input: Tensor, white_level: Tensor) -> Tensor:
+        burst_num = len(ori_input[0])
+        K_power = len(input[0]) // burst_num
+
+        output = torch.zeros_like(ori_input).to(input.device)
+        for i in range(len(ori_input[0])):
+            ori_frame = ori_input[:, i, :, :].unsqueeze(1)
+            output[:, i, :, :] = torch.mean(ori_frame * input[:, K_power * i : K_power * (i + 1)], 1)
+        output = output / white_level.squeeze(-1)
+        
+        if self.training:
+            return torch.mean(output, 1), output
+        else:
+            return torch.mean(output, 1)
