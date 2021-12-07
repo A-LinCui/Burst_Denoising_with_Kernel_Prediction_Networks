@@ -168,9 +168,11 @@ if __name__ == "__main__":
             if epoch % args.save_every == 0:
                 save_path = os.path.join(args.train_dir, "ckpt_{}.pt".format(epoch))
                 torch.save(model.state_dict(), save_path)
+                LOGGER.info("Save checkpoint to {}".format(save_path))
 
         scheduler.step()
 
     if args.train_dir:
         save_path = os.path.join(args.train_dir, "final.pt")
         torch.save(model.state_dict(), save_path)
+        LOGGER.info("Save checkpoint to {}".format(save_path))
