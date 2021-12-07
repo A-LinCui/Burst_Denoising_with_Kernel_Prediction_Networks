@@ -11,9 +11,62 @@ import extorch.utils as utils
 
 from kpn import KPN
 from dataset import Adobe5K, KPNDataset
-
 from loss import LossFunc
+from stats import sRGBTransfer, cal_ssim, cal_psnr
 
+
+def valid(net, trainloader, device, epoch, report_every, logger):
+    psnrs = utils.AverageMeter()
+    ssims = utils.AverageMeter()
+    
+    net.eval()
+    for step, (burst, target, white_level) in enumerate(trainloader):
+        burst = burst.to(device)
+        target = target.to(device)
+        white_level = white_level.to(device)
+
+        mean_output = net(burst, white_level)
+
+        n = burst.size(0)
+        ssims.update(cal_ssim(mean_output, target), n)
+        psnrs.update(cal_psnr(mean_output, target), n)
+
+        if (step + 1) % report_every == 0:
+            logger.info("Epoch {} train {} / {} {:.3f}; {:.3f}".format(
+                epoch, step + 1, len(trainloader), psnrs.avg, ssims.avg))
+    
+    return psnrs.avg, ssims.avg
+ 
+
+def train_epoch(net, trainloader, device, optimizer, criterion, epoch, report_every, logger):
+    objs = utils.AverageMeter()
+    psnrs = utils.AverageMeter()
+    ssims = utils.AverageMeter()
+    
+    net.train()
+    for step, (burst, target, white_level) in enumerate(trainloader):
+        burst = burst.to(device)
+        target = target.to(device)
+        white_level = white_level.to(device)
+
+        optimizer.zero_grad()
+        mean_output, output = net(burst, white_level)
+        loss = criterion(sRGBTransfer(output), sRGBTransfer(mean_output), sRGBTransfer(target), epoch)
+        loss.backward()
+        optimizer.step()
+
+        n = burst.size(0)
+        objs.update(loss.item(), n)
+        ssims.update(cal_ssim(mean_output, target), n)
+        psnrs.update(cal_psnr(mean_output, target), n)
+        del loss
+
+        if (step + 1) % report_every == 0:
+            logger.info("Epoch {} train {} / {} {:.3f}; {:.3f}; {:.3f}".format(
+                epoch, step + 1, len(trainloader), objs.avg, psnrs.avg, ssims.avg))
+    
+    return objs.avg, psnrs.avg, ssims.avg
+ 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -22,11 +75,17 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", type = str, required = True, help = "path of the data")
     parser.add_argument("--train-dir", type = str, default = None, help = "path to save the ckpt")
     parser.add_argument("--seed", type = int, default = None)
+    parser.add_argument("--report-every", type = int, default = 50)
+    parser.add_argument("--save-every", type = int, default = 20)
     parser.add_argument("--only-eval", action = "store_true", default = False)
     parser.add_argument("--load", type = str, default = None)
     args = parser.parse_args()
 
     LOGGER = utils.getLogger("Main")
+
+    LOGGER.info("Load configuration from {}".format(os.path.abspath(args.cfg_file)))
+    with open(args.cfg_file, "r") as rf:
+        cfg = yaml.load(rf, Loader = yaml.FullLoader)
 
     if args.train_dir and not args.only_eval:
         LOGGER.info("Save checkpoint at {}".format(os.path.abspath(args.train_dir)))
@@ -35,10 +94,6 @@ if __name__ == "__main__":
         writer = SummaryWriter(os.path.join(args.train_dir, "tensorboard"))
         with open(os.path.join(args.train_dir, "config.yaml"), "w") as wf:
             yaml.dump(cfg, wf)
-
-    LOGGER.info("Load configuration from {}".format(os.path.abspath(args.cfg_file)))
-    with open(args.cfg_file, "r") as rf:
-        cfg = yaml.load(rf, Loader = yaml.FullLoader)
 
     if torch.cuda.is_available():
         DEVICE = torch.device("cuda:{}".format(args.gpu))
@@ -75,39 +130,25 @@ if __name__ == "__main__":
         optimizer = optim.Adam(model.parameters(), lr = cfg["learning_rate"])
         scheduler = optim.lr_scheduler.StepLR(optimizer, **cfg["scheduler_cfg"])
 
-    for epoch in range(100):
-        total_loss = 0
-        total = 0
-        for burst, target, white_level in train_loader:
-            burst = burst.to(DEVICE)
-            target = target.to(DEVICE)
-            white_level = white_level.to(DEVICE)
-            mean_output, output = model(burst, white_level)
+    for epoch in range(1, cfg["epochs"] + 1):
+        LOGGER.info("Epoch {} lr {:.5f}".format(epoch, optimizer.param_groups[0]["lr"]))
 
-            loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
-            loss = loss_basic + loss_anneal
+        train_loss, train_psnr, train_ssim = train_epoch(
+            model, train_loader, DEVICE, optimizer, criterion, epoch, args.report_every, LOGGER)
+        LOGGER.info("Epoch {}: Train: obj: {:.5f}; PSNR: {:.4f}; SSIM: {:.4f}".format(
+            epoch, train_loss, train_psnr, train_ssim))
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            total_loss += loss.item()
-            total += len(burst)
-        print("Epoch {}: {:.5f}".format(epoch, total_loss / total))
+        val_psnr, val_ssim = valid(
+                model, val_loader, DEVICE, epoch, args.report_every, LOGGER)
+        LOGGER.info("Epoch {}: Valid: PSNR: {:.4f}; SSIM: {:.4f}".format(
+            epoch, val_psnr, val_ssim))
         
-        total_loss = 0
-        total = 0
-        for burst, target, white_level in val_loader:
-            burst = burst.to(DEVICE)
-            target = target.to(DEVICE)
-            white_level = white_level.to(DEVICE)
-            mean_output, output = model(burst, white_level)
+        if epoch % args.save_every == 0 and args.train_dir:
+            save_path = os.path.join(args.train_dir, "ckpt_{}.pt".format(epoch))
+            torch.save(model.state_dict(), save_path)
 
-            loss_basic, loss_anneal = criterion(output, mean_output, target, 0)
-            loss = loss_basic + loss_anneal
-            
-            total_loss += loss.item()
-            total += len(burst)
-        
-        print("Epoch {}: val:{:.5f}".format(epoch, total_loss / total))
-        
+        scheduler.step()
+
+    if args.train_dir:
+        save_path = os.path.join(args.train_dir, "final.pt")
+        torch.save(model.state_dict(), save_path)
