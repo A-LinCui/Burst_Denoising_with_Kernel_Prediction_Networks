@@ -2,28 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from stats import sRGBTransfer
 
-class LossFunc(nn.Module):
-    """
-    loss function of KPN
-    """
+
+class KPNLoss(nn.Module):
     def __init__(self, coeff_basic=1.0, coeff_anneal=1.0, gradient_L1=True, alpha=0.9998, beta=100):
-        super(LossFunc, self).__init__()
+        super(KPNLoss, self).__init__()
         self.coeff_basic = coeff_basic
         self.coeff_anneal = coeff_anneal
         self.loss_basic = LossBasic(gradient_L1)
         self.loss_anneal = LossAnneal(alpha, beta)
 
     def forward(self, pred_img_i, pred_img, ground_truth, global_step):
-        """
-        forward function of loss_func
-        :param frames: frame_1 ~ frame_N, shape: [batch, N, 3, height, width]
-        :param core: a dict coverted by ......
-        :param ground_truth: shape [batch, 3, height, width]
-        :param global_step: int
-        :return: loss
-        """
-        return self.coeff_basic * self.loss_basic(pred_img, ground_truth), self.coeff_anneal * self.loss_anneal(global_step, pred_img_i, ground_truth)
+        return self.coeff_basic * self.loss_basic(
+                sRGBTransfer(pred_img), sRGBTransfer(ground_truth)) +\
+                self.coeff_anneal * self.loss_anneal(global_step, sRGBTransfer(pred_img_i), 
+                        sRGBTransfer(ground_truth))
 
 
 class LossBasic(nn.Module):
