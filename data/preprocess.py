@@ -13,6 +13,7 @@ if __name__ == "__main__":
         os.makedirs(save_path)
 
     for img_name in tqdm(img_lst):
-        img = cv2.imread(os.path.join(ori_data_path, img_name))
+        path = os.path.join(ori_data_path, img_name)
+        img = cv2.imread(path)
         img_gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        cv2.imwrite(os.path.join(save_path, img_name), img_gray)
+        cv2.imwrite(os.path.join(save_path, img_name[:-3] + "png"), img_gray)
