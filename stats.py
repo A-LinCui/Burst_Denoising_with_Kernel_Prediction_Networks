@@ -5,6 +5,15 @@ import extorch.utils as utils
 
 
 def sRGBTransfer(input: Tensor) -> Tensor:
+    r"""
+    The applied sRGD transfer function.
+
+    Args:
+        input (Tensor): The input images.
+
+    Returns:
+        res (Tensor): The images after transfermation.
+    """
     threshold = 0.0031308
     a = 0.055
     mult = 12.92
@@ -17,6 +26,18 @@ def sRGBTransfer(input: Tensor) -> Tensor:
 
 
 def cal_psnr(output: Tensor, target: Tensor) -> float:
+    r"""
+    Calculate PSNR between images.
+
+    Args:
+        output (Tensor): The batch of images with pixel values in [0, 1]. 
+                         Shape: [b, h, w].
+        target (Tensor): The batch of reference images with pixel values in [0, 1]. 
+                         Shape: [b, h, w].
+
+    Returns:
+        psnr (float): Average PSNR value.
+    """
     output = 255. * output.unsqueeze(-1).detach().cpu().numpy()
     target = 255. * target.unsqueeze(-1).detach().cpu().numpy()
 
@@ -28,6 +49,18 @@ def cal_psnr(output: Tensor, target: Tensor) -> float:
 
 
 def cal_ssim(output: Tensor, target: Tensor) -> float:
+    r"""
+    Calculate SSIM between images.
+
+    Args:
+        output (Tensor): The batch of images with pixel values in [0, 1]. 
+                         Shape: [b, h, w].
+        target (Tensor): The batch of reference images with pixel values in [0, 1]. 
+                         Shape: [b, h, w].
+
+    Returns:
+        ssim (float): Average SSIM value.
+    """
     output = 255. * output.unsqueeze(-1).detach().cpu().numpy()
     target = 255. * target.unsqueeze(-1).detach().cpu().numpy()
 
