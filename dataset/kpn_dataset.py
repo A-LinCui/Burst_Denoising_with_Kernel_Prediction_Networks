@@ -183,36 +183,3 @@ class KPNDataset(CVDataset):
                 "test": test_transform
         }
         return default_transforms
-
-
-if __name__ == "__main__":
-    dataset = KPNDataset(data_dir = "/mnt/c/Users/HUAWEI/Desktop/Adobe5K_gray", 
-                         kpn_transform_kwargs = {
-                             "burst_num": 8,
-                             "downsample": 1,
-                             "blind": False,
-                             "misalignment": 2,
-                             "max_translational_shift": 10},
-                         base_dataset_cls = Adobe5K,
-                         base_dataset_cfg = {
-                             "train_ratio": 0.5, 
-                             "random_split": False}
-                         )
-
-    for i, data in enumerate(dataset.splits["test"]):
-
-        if i < 20:
-            continue
-
-        from matplotlib import cm
-        import matplotlib.pyplot as plt
-        for i, _data in enumerate(data[0]):
-            _data = _data.numpy().transpose(1, 2, 0)
-            plt.figure()
-            plt.imshow(_data, cmap = cm.gray)
-            plt.savefig("/mnt/e/noise_{}.png".format(i), dpi = 600)
-        plt.figure()
-        plt.imshow(data[1].numpy().transpose(1, 2, 0), cmap = cm.gray)
-        plt.savefig("/mnt/e/target.png", dpi = 600)
-
-        break

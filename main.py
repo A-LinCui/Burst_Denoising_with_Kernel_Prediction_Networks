@@ -129,12 +129,7 @@ if __name__ == "__main__":
     elif cfg["criterion_type"] == "L2Loss":
         criterion = nn.MSELoss()
     elif cfg["criterion_type"] == "KPNLoss":
-        criterion = KPNLoss(
-            coeff_basic = 1.0,
-            coeff_anneal = 1.0,
-            gradient_L1 = True,
-            alpha = 0.9998,
-            beta = 100.)
+        criterion = KPNLoss(**cfg["criterion_cfg"])
    
     if args.only_eval:
         val_psnr, val_ssim = valid(
