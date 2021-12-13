@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 
 
-def draw(target: Tensor, output: Tensor, burst: Tensor, path: str) -> None:#
+def draw(target: Tensor, output: Tensor, burst: Tensor, path: str) -> None:
     r"""
     Draw the denoising result and save the figure under given path.
 
